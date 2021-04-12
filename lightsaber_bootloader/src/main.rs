@@ -291,11 +291,11 @@ fn lightsaber_load_system_kernel<I>(kernel_bin: &[u8], frame_allocator: &mut Boo
 {
     log::info!("Loading Lightsaber System kernel.");
 
-    let kernel_elf = ElfFile::new(&kernel_bin).expect("The Lightsaber System kernel file is corrupted.");
+    let kernel_elf = ElfFile::new(&kernel_bin).expect("The Lightsaber System Kernel file is corrupted.");
     let kernel_offset = PhysAddr::new(&kernel_bin[0] as *const u8 as u64);
 
     assert!(kernel_offset.is_aligned(Size4KiB::SIZE));
-    header::sanity_check(&kernel_elf).expect("The Lightsaber System kernel file failed the header sanity check.");
+    header::sanity_check(&kernel_elf).expect("The Lightsaber System Kernel file failed the header sanity check.");
 
     log::info!(
         "Found Lightsaber System kernel entry point at {:#06x}.",
@@ -303,7 +303,7 @@ fn lightsaber_load_system_kernel<I>(kernel_bin: &[u8], frame_allocator: &mut Boo
     );
 
     for header in kernel_elf.program_iter() {
-        program::sanity_check(header, &kernel_elf).expect("The Lightsaber System kernel file failed the program header sanity check.");
+        program::sanity_check(header, &kernel_elf).expect("The Lightsaber System Kernel file failed the program header sanity check.");
 
         match header.get_type().expect("Unable to get the header type.") {
             Type::Load => lightsaber_map_segment(&header, kernel_offset, frame_allocator, kernel_page_table),
