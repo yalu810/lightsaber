@@ -284,6 +284,92 @@ fn lightsaber_load_file(boot_services: &BootServices, path: &str) -> &'static [u
     buffer[..length].as_ref()
 }
 
+fn lightsaber_load_system_kernel<I>(kernel_bin: &[u8], frame_allocator: &mut BootFrameAllocator<I>, kernel_page_table: &mut OffsetPageTable)
+                                    -> (LightsaberSystemKernelInformation, LevelFourEntries)
+    where
+        I: ExactSizeIterator<Item = MemoryDescriptor> + Clone
+{
+    log::info!("Loading Lightsaber System kernel.");
+
+    let kernel_elf = ElfFile::new(&kernel_bin).expect("The Lightsaber System kernel file is corrupted.");
+    let kernel_offset = PhysAddr::new(&kernel_bin[0] as *const u8 as u64);
+
+    assert!(kernel_offset.is_aligned(Size4KiB::SIZE));
+    header::sanity_check(&kernel_elf).expect("The Lightsaber System kernel file failed the header sanity check.");
+
+    log::info!(
+        "Found Lightsaber System kernel entry point at {:#06x}.",
+        kernel_elf.header.pt2.entry_point()
+    );
+
+    for header in kernel_elf.program_iter() {
+        program::sanity_check(header, &kernel_elf).expect("The Lightsaber System kernel file failed the program header sanity check.");
+
+        match header.get_type().expect("Unable to get the header type.") {
+            Type::Load => lightsaber_map_segment(&header, kernel_offset, frame_allocator, kernel_page_table),
+            _ => (),
+        }
+    }
+
+    let mut used_entries = LevelFourEntries::new(kernel_elf.program_iter());
+
+    let stack_start_address = used_entries.get_free_address();
+    let stack_end_address = stack_start_address + 20 * Size4KiB::SIZE;
+
+    let stack_start: Page = Page::containing_address(stack_start_address);
+    let stack_end: Page = Page::containing_address(stack_end_address - 1u64);
+
+    for page in Page::range_inclusive(stack_start, stack_end) {
+        let frame = frame_allocator.allocate_frame().unwrap();
+
+        unsafe {
+            kernel_page_table
+                .map_to(
+                    page,
+                    frame,
+                    PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
+                    frame_allocator,
+                )
+                .unwrap()
+                .flush();
+        }
+    }
+
+    log::info!("Mapping physical memory.");
+
+    let physical_memory_offset = used_entries.get_free_address();
+
+    let start_frame = PhysFrame::containing_address(PhysAddr::new(0));
+    let max_physical = frame_allocator.max_physical_address();
+
+    let end_frame: PhysFrame<Size2MiB> = PhysFrame::containing_address(max_physical - 1u64);
+
+    for frame in PhysFrame::range_inclusive(start_frame, end_frame) {
+        let page =
+            Page::containing_address(physical_memory_offset + frame.start_address().as_u64());
+
+        unsafe {
+            kernel_page_table
+                .map_to(
+                    page,
+                    frame,
+                    PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
+                    frame_allocator,
+                )
+                .unwrap()
+                .ignore();
+        }
+    }
+
+    (
+        LightsaberSystemKernelInformation {
+            entry_point: VirtAddr::new(kernel_elf.header.pt2.entry_point()),
+            stack_top: stack_end.start_address()
+        },
+        used_entries,
+    )
+}
+
 fn lightsaber_map_segment(segment: &ProgramHeader, kernel_offset: PhysAddr, frame_allocator: &mut impl FrameAllocator<Size4KiB>, page_table: &mut OffsetPageTable) {
     let physical_address = kernel_offset + segment.offset();
     let start_frame: PhysFrame = PhysFrame::containing_address(physical_address);
@@ -372,92 +458,6 @@ fn lightsaber_map_segment(segment: &ProgramHeader, kernel_offset: PhysAddr, fram
             }
         }
     }
-}
-
-fn lightsaber_load_system_kernel<I>(kernel_bin: &[u8], frame_allocator: &mut BootFrameAllocator<I>, kernel_page_table: &mut OffsetPageTable)
-    -> (LightsaberSystemKernelInformation, LevelFourEntries)
-    where
-        I: ExactSizeIterator<Item = MemoryDescriptor> + Clone
-{
-    log::info!("Loading Lightsaber System kernel.");
-
-    let kernel_elf = ElfFile::new(&kernel_bin).expect("The Lightsaber System kernel file is corrupted.");
-    let kernel_offset = PhysAddr::new(&kernel_bin[0] as *const u8 as u64);
-
-    assert!(kernel_offset.is_aligned(Size4KiB::SIZE));
-    header::sanity_check(&kernel_elf).expect("The Lightsaber System kernel file failed the header sanity check.");
-
-    log::info!(
-        "Found Lightsaber System kernel entry point at {:#06x}.",
-        kernel_elf.header.pt2.entry_point()
-    );
-
-    for header in kernel_elf.program_iter() {
-        program::sanity_check(header, &kernel_elf).expect("The Lightsaber System kernel file failed the program header sanity check.");
-
-        match header.get_type().expect("Unable to get the header type.") {
-            Type::Load => lightsaber_map_segment(&header, kernel_offset, frame_allocator, kernel_page_table),
-            _ => (),
-        }
-    }
-
-    let mut used_entries = LevelFourEntries::new(kernel_elf.program_iter());
-
-    let stack_start_address = used_entries.get_free_address();
-    let stack_end_address = stack_start_address + 20 * Size4KiB::SIZE;
-
-    let stack_start: Page = Page::containing_address(stack_start_address);
-    let stack_end: Page = Page::containing_address(stack_end_address - 1u64);
-
-    for page in Page::range_inclusive(stack_start, stack_end) {
-        let frame = frame_allocator.allocate_frame().unwrap();
-
-        unsafe {
-            kernel_page_table
-                .map_to(
-                    page,
-                    frame,
-                    PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
-                    frame_allocator,
-                )
-                .unwrap()
-                .flush();
-        }
-    }
-
-    log::info!("Mapping physical memory.");
-
-    let physical_memory_offset = used_entries.get_free_address();
-
-    let start_frame = PhysFrame::containing_address(PhysAddr::new(0));
-    let max_physical = frame_allocator.max_physical_address();
-
-    let end_frame: PhysFrame<Size2MiB> = PhysFrame::containing_address(max_physical - 1u64);
-
-    for frame in PhysFrame::range_inclusive(start_frame, end_frame) {
-        let page =
-            Page::containing_address(physical_memory_offset + frame.start_address().as_u64());
-
-        unsafe {
-            kernel_page_table
-                .map_to(
-                    page,
-                    frame,
-                    PageTableFlags::PRESENT | PageTableFlags::WRITABLE,
-                    frame_allocator,
-                )
-                .unwrap()
-                .ignore();
-        }
-    }
-
-    (
-        LightsaberSystemKernelInformation {
-            entry_point: VirtAddr::new(kernel_elf.header.pt2.entry_point()),
-            stack_top: stack_end.start_address()
-        },
-        used_entries,
-    )
 }
 
 fn lightsaber_switch_to_system_kernel(
