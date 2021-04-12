@@ -1,0 +1,18 @@
+[package]
+name = "project_lightsaber"
+version = "0.1.0"
+authors = ["HTGAzureX1212"]
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies.lightsaber_bootloader]
+path = "lightsaber_bootloader"
+
+[profile.dev]
+opt-level = 0
+panic = "abort"
+
+[profile.release]
+opt-level = "z"
+panic = "abort"
