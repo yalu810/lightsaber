@@ -145,8 +145,6 @@ fn efi_main(image: Handle, system_table: SystemTable<Boot>) -> Status {
         boot_information,
     );
 
-    log::info!("Switching to Lightsaber System Kernel.");
-
     lightsaber_switch_to_system_kernel(kernel_information, new_boot_information, &mut boot_frame_allocator, &mut page_tables);
 }
 
@@ -156,7 +154,6 @@ fn lightsaber_create_boot_information<I>(used_entries: &mut LevelFourEntries,
                                          boot_info: BootInformation) -> &'static mut BootInformation
     where
         I: ExactSizeIterator<Item = MemoryDescriptor> + Clone {
-    log::info!("Creating boot information for Lightsaber System Kernel.");
 
     let boot_info_start = used_entries.get_free_address();
     let boot_info_end = boot_info_start + mem::size_of::<BootInformation>();
@@ -287,20 +284,13 @@ fn lightsaber_load_file(boot_services: &BootServices, path: &str) -> &'static [u
 fn lightsaber_load_system_kernel<I>(kernel_bin: &[u8], frame_allocator: &mut BootFrameAllocator<I>, kernel_page_table: &mut OffsetPageTable)
                                     -> (LightsaberSystemKernelInformation, LevelFourEntries)
     where
-        I: ExactSizeIterator<Item = MemoryDescriptor> + Clone
-{
-    log::info!("Loading Lightsaber System kernel.");
+        I: ExactSizeIterator<Item = MemoryDescriptor> + Clone {
 
     let kernel_elf = ElfFile::new(&kernel_bin).expect("The Lightsaber System Kernel file is corrupted.");
     let kernel_offset = PhysAddr::new(&kernel_bin[0] as *const u8 as u64);
 
     assert!(kernel_offset.is_aligned(Size4KiB::SIZE));
     header::sanity_check(&kernel_elf).expect("The Lightsaber System Kernel file failed the header sanity check.");
-
-    log::info!(
-        "Found Lightsaber System kernel entry point at {:#06x}.",
-        kernel_elf.header.pt2.entry_point()
-    );
 
     for header in kernel_elf.program_iter() {
         program::sanity_check(header, &kernel_elf).expect("The Lightsaber System Kernel file failed the program header sanity check.");
@@ -334,8 +324,6 @@ fn lightsaber_load_system_kernel<I>(kernel_bin: &[u8], frame_allocator: &mut Boo
                 .flush();
         }
     }
-
-    log::info!("Mapping physical memory.");
 
     let physical_memory_offset = used_entries.get_free_address();
 
