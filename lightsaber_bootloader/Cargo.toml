@@ -16,8 +16,8 @@ version = "1.0.0"
 [dependencies.uefi]
 version = "0.8.0"
 
-[dependencies.uefi-services]
-version = "0.5.0"
+#[dependencies.uefi-services]
+#version = "0.5.0"
 
 [dependencies.xmas-elf]
 version = "0.7.0"
