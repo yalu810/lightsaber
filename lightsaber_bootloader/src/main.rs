@@ -16,6 +16,8 @@ use core::{
     slice
 };
 
+use log::LevelFilter;
+
 use uefi::{
     prelude::{
         Boot,
@@ -26,7 +28,10 @@ use uefi::{
         SystemTable
     },
     proto::{
-        console::gop::GraphicsOutput,
+        console::gop::{
+            GraphicsOutput,
+            PixelFormat
+        },
         media::{
             file::{
                 File,
@@ -76,6 +81,11 @@ use x86_64::{
 };
 
 use lightsaber_bootloader::{
+    logger::{
+        self,
+        Logger,
+        MutexedLogger
+    },
     paging::{
         self,
         BootFrameAllocator,
@@ -84,8 +94,11 @@ use lightsaber_bootloader::{
     },
     BootInformation,
     FramebufferInformation,
-    MemoryRegion
+    MemoryRegion,
+    PixelColourFormat
 };
+
+mod unwind;
 
 const LIGHTSABER_SYSTEM_KERNEL_ELF_PATH: &str = r"\efi\kernel\lightsaber.elf";
 const ZERO_PAGE_ARRAY_SIZE_FOUR_KIB: PageArraySize4KiB = [0; Size4KiB::SIZE as usize / 8];
@@ -99,7 +112,7 @@ type PageArraySize4KiB = [u64; Size4KiB::SIZE as usize / 8];
 
 #[entry]
 fn efi_main(image: Handle, system_table: SystemTable<Boot>) -> Status {
-    uefi_services::init(&system_table).expect_success("Failed to initialize UEFI services.");
+    //uefi_services::init(&system_table).expect_success("Failed to initialize UEFI services.");
 
     system_table
         .stdout()
@@ -107,6 +120,8 @@ fn efi_main(image: Handle, system_table: SystemTable<Boot>) -> Status {
         .expect_success("Failed to reset stdout.");
 
     let framebuffer_information = lightsaber_initialize_graphics_output_protocol(&system_table);
+    log::info!("Initialized Graphics Output Protocol.");
+
     let kernel_bin = lightsaber_load_file(system_table.boot_services(), LIGHTSABER_SYSTEM_KERNEL_ELF_PATH);
 
     log::info!("Exiting boot services.");
@@ -210,8 +225,6 @@ fn lightsaber_create_boot_information<I>(used_entries: &mut LevelFourEntries,
 }
 
 fn lightsaber_initialize_graphics_output_protocol(system_table: &SystemTable<Boot>) -> FramebufferInformation {
-    log::info!("Initializing Graphics Output Protocol.");
-
     let graphics_output_protocol = unsafe {
         &mut *system_table.boot_services()
             .locate_protocol::<GraphicsOutput>()
@@ -220,13 +233,33 @@ fn lightsaber_initialize_graphics_output_protocol(system_table: &SystemTable<Boo
     };
 
     let mode_information = graphics_output_protocol.current_mode_info();
-    let (horizontal_resolution, vertical_resolution) = mode_information.resolution();
+    let mut framebuffer = graphics_output_protocol.frame_buffer();
+    let slice = unsafe {
+        slice::from_raw_parts_mut(framebuffer.as_mut_ptr(), framebuffer.size())
+    };
 
-    FramebufferInformation {
-        horizontal_resolution,
-        vertical_resolution,
-        stride: mode_information.stride()
-    }
+    let information = FramebufferInformation {
+        len_bytes: framebuffer.size(),
+        horizontal_resolution: mode_information.resolution().0,
+        vertical_resolution: mode_information.resolution().1,
+        pixel_colour_format: match mode_information.pixel_format() {
+            PixelFormat::Rgb => PixelColourFormat::Rgb,
+            PixelFormat::Bgr => PixelColourFormat::Bgr,
+            PixelFormat::Bitmask | PixelFormat::BltOnly => {
+                panic!("Bitmask and BltOnly framebuffers are not supported.")
+            }
+        },
+        bytes_per_pixel: 4,
+        stride: mode_information.stride(),
+    };
+
+    let global_logger = MutexedLogger::new(Logger::new(slice, information.clone()));
+    let mutexed_logger = logger::LOGGER.call_once(|| global_logger);
+
+    log::set_logger(mutexed_logger).expect("Failed to set global logger.");
+    log::set_max_level(LevelFilter::Info);
+
+    information
 }
 
 fn lightsaber_load_file(boot_services: &BootServices, path: &str) -> &'static [u8] {
@@ -285,6 +318,7 @@ fn lightsaber_load_system_kernel<I>(kernel_bin: &[u8], frame_allocator: &mut Boo
                                     -> (LightsaberSystemKernelInformation, LevelFourEntries)
     where
         I: ExactSizeIterator<Item = MemoryDescriptor> + Clone {
+    log::info!("Loading the Lightsaber System Kernel.");
 
     let kernel_elf = ElfFile::new(&kernel_bin).expect("The Lightsaber System Kernel file is corrupted.");
     let kernel_offset = PhysAddr::new(&kernel_bin[0] as *const u8 as u64);
@@ -468,6 +502,8 @@ fn lightsaber_switch_to_system_kernel(
                 .flush();
         }
     }
+
+    log::info!("Jumping to the Lightsaber System Kernel entry point.");
 
     unsafe {
         let kernel_level_four_start = page_tables.kernel_level_four_frame.start_address().as_u64();
