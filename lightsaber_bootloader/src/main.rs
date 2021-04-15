@@ -474,10 +474,13 @@ fn lightsaber_switch_to_system_kernel(
         let stack_top = kernel_information.stack_top.as_u64();
         let entry_point = kernel_information.entry_point.as_u64();
 
-        asm!("mov cr3, {}", in(reg) kernel_level_four_start);
-        asm!("mov rsp, {}", in(reg) stack_top);
-        asm!("push 0");
-        asm!("jmp {}", in(reg) entry_point, in("rdi") &boot_information as *const _ as usize);
+        asm!(
+            "mov cr3, {}; mov rsp, {}; push 0; jmp {}",
+            in(reg) kernel_level_four_start,
+            in(reg) stack_top,
+            in(reg) entry_point,
+            in("rdi") boot_information as *const _ as usize,
+        );
     }
 
     unreachable!()
