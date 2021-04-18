@@ -10,7 +10,7 @@ cargo build --package lightsaber_bootloader --target x86_64-unknown-uefi -Z buil
 
 echo ==================== Compiling System Kernel ====================
 
-cargo build --target .\x86_64-unknown-lightsaber.json -Z build-std=core,alloc --verbose
+cargo build --package lightsaber_kernel --target .\x86_64-unknown-lightsaber.json -Z build-std=core,alloc --verbose
 
 echo ==================== Writing Built Files ====================
 
